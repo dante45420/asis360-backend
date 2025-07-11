@@ -1,10 +1,12 @@
 # manage_db.py
-import click
-from app import create_app, db
-import decimal
-from datetime import datetime, timedelta
 
-# Importar todos los modelos de la nueva arquitectura
+import click
+import os
+from decimal import Decimal, ROUND_DOWN
+from app import create_app, db
+
+# Asumo que tus modelos están en app/models/ y se llaman así.
+# Si la estructura o los nombres son diferentes, ajústalos aquí.
 from app.models import (
     Usuario, Organizacion, PerfilCliente, Proveedor, PerfilProveedor,
     Producto, RequisitoProducto, PreciosProducto, Pedido, DetallePedido,
@@ -12,6 +14,10 @@ from app.models import (
 )
 
 app = create_app()
+
+# -----------------------------------------------------------------------------
+# DEFINICIÓN DE COMANDOS DE LÍNEA (CLI)
+# -----------------------------------------------------------------------------
 
 @click.group()
 def cli():
@@ -21,11 +27,12 @@ def cli():
 @cli.command('create')
 @click.option('--force', is_flag=True, help='Elimina las tablas existentes antes de crearlas.')
 def create(force):
+    """Crea todas las tablas de la base de datos."""
     with app.app_context():
         if force:
             print("Eliminando todas las tablas existentes...")
             db.drop_all()
-        print("Creando todas las tablas con la nueva arquitectura...")
+        print("Creando todas las tablas...")
         db.create_all()
         print("Tablas creadas exitosamente.")
 
@@ -40,791 +47,787 @@ def drop():
         else:
             print("Operación cancelada.")
 
+# -----------------------------------------------------------------------------
+# COMANDO PRINCIPAL PARA POBLAR LA BASE DE DATOS (SEED)
+# -----------------------------------------------------------------------------
+
 @cli.command('seed')
 def seed():
-    """Puebla la base de datos con un ecosistema completo y extendido de datos de prueba para una cafetería."""
+    """
+    Puebla la base de datos con un ecosistema de producción completo.
+    """
     with app.app_context():
-        print("Iniciando el proceso de 'seeding' masivo...")
-        # Limpieza en el orden correcto para evitar conflictos de Foreign Key
+        print("=====================================================")
+        print("= INICIANDO PROCESO DE SEEDING COMPLETO =")
+        print("=====================================================")
+
+        # --- 1. Limpieza de la base de datos ---
+        print("\n[Paso 1/5] Limpiando la base de datos...")
         DetallePedido.query.delete()
         PreciosProducto.query.delete()
         RequisitoProducto.query.delete()
-        Mensaje.query.delete()
-        SoporteResolucion.query.delete()
-        TicketProducto.query.delete()
-        Pedido.query.delete()
-        Conversacion.query.delete()
         Producto.query.delete()
-        PerfilProveedor.query.delete()
         Proveedor.query.delete()
-        PerfilCliente.query.delete()
-        Organizacion.query.delete()
+        # Puedes añadir más tablas si es necesario
+        db.session.commit()
+        # Limpiamos usuarios al final
         Usuario.query.delete()
         db.session.commit()
-        print("Base de datos limpia.")
+        print("-> Base de datos limpia.")
 
-        # =================================================================
-        # 1. MANTENER USUARIOS Y DATOS DE PRUEBA EXISTENTES
-        # =================================================================
-        print("Creando usuarios y perfiles de prueba...")
-        admin = Usuario(nombre="Dante Parodi", telefono="+56969172764", email="admin@test.com", rol='admin')
-        admin.set_password("admin123")
+        # --- 2. Creación de Admin Profesional y Seguro ---
+        print("\n[Paso 2/5] Creando usuario administrador...")
+        admin_email = os.getenv("ADMIN_EMAIL")
+        admin_password = os.getenv("ADMIN_PASSWORD")
         
-        test_user = Usuario(nombre="Dueño Cafetería El Aromático", telefono="56969144469", email="dueño@cafearomatico.cl", rol='cliente')
-        test_user.set_password("hola")
-        
-        db.session.add_all([admin, test_user])
-        db.session.commit()
+        if not all([admin_email, admin_password]):
+            print("\n!!! ERROR: Faltan las variables de entorno ADMIN_EMAIL o ADMIN_PASSWORD.")
+            print("!!! No se puede crear el administrador. Cancela la operación.")
+            return
 
-        test_perfil = PerfilCliente(
-            usuario_id=test_user.usuario_id,
-            telefono_vinculado=test_user.telefono,
-            nombre=test_user.nombre,
-            rut="77.123.456-K",
-            direccion="Avenida Providencia 123, Santiago"
-        )
-        db.session.add(test_perfil)
-        db.session.commit()
-
-        print("Creando pedidos de ejemplo...")
-        pedido_pagado = Pedido(perfil_cliente_id=test_perfil.perfil_cliente_id, estado='pagado', monto_total=decimal.Decimal("18990"))
-        pedido_cancelado = Pedido(perfil_cliente_id=test_perfil.perfil_cliente_id, estado='cancelado', monto_total=decimal.Decimal("8500"))
-        pedido_pausa = Pedido(perfil_cliente_id=test_perfil.perfil_cliente_id, estado='en_pausa', monto_total=decimal.Decimal("25000"))
-        db.session.add_all([pedido_pagado, pedido_cancelado, pedido_pausa])
-        db.session.commit()
-
-        print("Creando conversación de soporte de ejemplo...")
-        conv_soporte = Conversacion(perfil_cliente_id=test_perfil.perfil_cliente_id, estado_actual="en_soporte", estado_soporte="pendiente")
-        db.session.add(conv_soporte)
-        db.session.commit()
-        msg1 = Mensaje(conversacion_id=conv_soporte.conversacion_id, remitente="usuario", cuerpo_mensaje="Hola, tengo una duda sobre mi último pedido pagado.")
-        db.session.add(msg1)
-        db.session.commit()
-        print("Datos de prueba iniciales creados.")
-
-        # =================================================================
-        # 2. CREAR PROVEEDORES
-        # =================================================================
-        print("Creando el ecosistema de 24 proveedores para cafeterías...")
-        
-        # --- Lista de Proveedores ---
-        providers_data = [
-            # Café
-            {"nombre": "Café del Sur", "info_contacto": "ventas@cafedelsur.cl", "calidad_servicio": 9},
-            {"nombre": "Tostaduría Andina", "info_contacto": "contacto@tostaduriaandina.cl", "calidad_servicio": 8},
-            {"nombre": "Café Místico del Elqui", "info_contacto": "ventas@cafemistico.cl", "calidad_servicio": 8},
-            # Lácteos
-            {"nombre": "Lácteos del Valle", "info_contacto": "pedidos@lacteosdelvalle.cl", "calidad_servicio": 8},
-            {"nombre": "Surlat", "info_contacto": "contacto@surlat.cl", "calidad_servicio": 9},
-            {"nombre": "Lecherías del Sur", "info_contacto": "ventas@lecheriasdelsur.com", "calidad_servicio": 7},
-            # Bebidas
-            {"nombre": "Distribuidora Andina", "info_contacto": "hablemos@koandina.com", "calidad_servicio": 9},
-            {"nombre": "CCU", "info_contacto": "servicio.cliente@ccu.cl", "calidad_servicio": 9},
-            {"nombre": "Embotelladora Bicentenario", "info_contacto": "contacto@embicentenario.cl", "calidad_servicio": 7},
-            # Panadería
-            {"nombre": "Panadería La Tradición", "info_contacto": "contacto@latradicion.cl", "calidad_servicio": 8},
-            {"nombre": "Delicias de la Abuela", "info_contacto": "pedidos@deliciasabuela.cl", "calidad_servicio": 9},
-            {"nombre": "BredenMaster", "info_contacto": "ventas.horeca@bredenmaster.com", "calidad_servicio": 8},
-            # Desechables
-            {"nombre": "Ecologico-Pack", "info_contacto": "ventas@ecopack.cl", "calidad_servicio": 8},
-            {"nombre": "Envases del Pacífico", "info_contacto": "contacto@envasespacifico.cl", "calidad_servicio": 7},
-            {"nombre": "BioPack Chile", "info_contacto": "info@biopack.cl", "calidad_servicio": 9},
-            # Limpieza
-            {"nombre": "Limpieza Total Pro", "info_contacto": "contacto@limpiezatotal.pro", "calidad_servicio": 8},
-            {"nombre": "Virutex", "info_contacto": "ventas@virutex.cl", "calidad_servicio": 9},
-            {"nombre": "DDI Chile", "info_contacto": "info@ddichile.cl", "calidad_servicio": 8},
-            # Abarrotes
-            {"nombre": "Alimentos del Campo", "info_contacto": "pedidos@alimentosdelcampo.com", "calidad_servicio": 7},
-            {"nombre": "Comercial Surtido", "info_contacto": "ventas@surtido.cl", "calidad_servicio": 8},
-            {"nombre": "Iansafood", "info_contacto": "contacto.foodservice@iansa.cl", "calidad_servicio": 9},
-            # Frutas y Verduras
-            {"nombre": "Frutas Frescas Lo Valledor", "info_contacto": "despachos@frutasfrescas.cl", "calidad_servicio": 8},
-            {"nombre": "La Vega Central Online", "info_contacto": "pedidos@lavegaonline.cl", "calidad_servicio": 7},
-            {"nombre": "CampoDirecto SpA", "info_contacto": "hola@campodirecto.cl", "calidad_servicio": 9},
-        ]
-        
-        providers = {}
-        for data in providers_data:
-            prov = Proveedor(**data)
-            db.session.add(prov)
-            providers[data['nombre']] = prov
-        
-        db.session.commit()
-        print("Proveedores creados.")
-
-        # manage_db.py
-import click
-from app import create_app, db
-import decimal
-from datetime import datetime, timedelta
-
-# Importar todos los modelos de la nueva arquitectura
-from app.models import (
-    Usuario, Organizacion, PerfilCliente, Proveedor, PerfilProveedor,
-    Producto, RequisitoProducto, PreciosProducto, Pedido, DetallePedido,
-    Conversacion, Mensaje, SoporteResolucion, TicketProducto
-)
-
-app = create_app()
-
-@click.group()
-def cli():
-    """Comandos de línea para la gestión de la base de datos."""
-    pass
-
-@cli.command('create')
-@click.option('--force', is_flag=True, help='Elimina las tablas existentes antes de crearlas.')
-def create(force):
-    with app.app_context():
-        if force:
-            print("Eliminando todas las tablas existentes...")
-            db.drop_all()
-        print("Creando todas las tablas con la nueva arquitectura...")
-        db.create_all()
-        print("Tablas creadas exitosamente.")
-
-@cli.command('drop')
-def drop():
-    """Elimina todas las tablas de la base de datos."""
-    with app.app_context():
-        if click.confirm('¿Estás seguro de que quieres eliminar todas las tablas? Esta acción es irreversible.'):
-            print("Eliminando todas las tablas...")
-            db.drop_all()
-            print("Tablas eliminadas exitosamente.")
+        if Usuario.query.filter_by(email=admin_email).first():
+            print(f"-> El usuario administrador con email '{admin_email}' ya existe.")
         else:
-            print("Operación cancelada.")
+            admin_user = Usuario(
+                nombre=os.getenv("ADMIN_NAME", "Admin Principal"),
+                telefono=os.getenv("ADMIN_PHONE", "+56900000000"),
+                email=admin_email,
+                rol='admin'
+            )
+            admin_user.set_password(admin_password)
+            db.session.add(admin_user)
+            db.session.commit()
+            print(f"-> Usuario administrador '{admin_email}' creado exitosamente.")
 
-@cli.command('seed')
-def seed():
-    """Puebla la base de datos con un ecosistema completo y extendido de datos de prueba para una cafetería."""
-    with app.app_context():
-        print("Iniciando el proceso de 'seeding' masivo...")
-        # Limpieza en el orden correcto para evitar conflictos de Foreign Key
-        DetallePedido.query.delete()
-        PreciosProducto.query.delete()
-        RequisitoProducto.query.delete()
-        Mensaje.query.delete()
-        SoporteResolucion.query.delete()
-        TicketProducto.query.delete()
-        Pedido.query.delete()
-        Conversacion.query.delete()
-        Producto.query.delete()
-        PerfilProveedor.query.delete()
-        Proveedor.query.delete()
-        PerfilCliente.query.delete()
-        Organizacion.query.delete()
-        Usuario.query.delete()
-        db.session.commit()
-        print("Base de datos limpia.")
-
-        # =================================================================
-        # 1. MANTENER USUARIOS Y DATOS DE PRUEBA EXISTENTES
-        # =================================================================
-        print("Creando usuarios y perfiles de prueba...")
-        admin = Usuario(nombre="Admin General", telefono="+56900000000", email="admin@test.com", rol='admin')
-        admin.set_password("admin123")
+        # --- 3. Definición de Funciones de Ayuda (Helpers) ---
+        print("\n[Paso 3/5] Definiendo funciones de ayuda...")
         
-        test_user = Usuario(nombre="Dueño Cafetería El Aromático", telefono="56969172769", email="dueño@cafearomatico.cl", rol='cliente')
-        test_user.set_password("hola")
-        
-        db.session.add_all([admin, test_user])
-        db.session.commit()
-
-        test_perfil = PerfilCliente(
-            usuario_id=test_user.usuario_id,
-            telefono_vinculado=test_user.telefono,
-            nombre=test_user.nombre,
-            rut="77.123.456-K",
-            direccion="Avenida Providencia 123, Santiago"
-        )
-        db.session.add(test_perfil)
-        db.session.commit()
-
-        print("Creando pedidos de ejemplo...")
-        pedido_pagado = Pedido(perfil_cliente_id=test_perfil.perfil_cliente_id, estado='pagado', monto_total=decimal.Decimal("18990"))
-        pedido_cancelado = Pedido(perfil_cliente_id=test_perfil.perfil_cliente_id, estado='cancelado', monto_total=decimal.Decimal("8500"))
-        pedido_pausa = Pedido(perfil_cliente_id=test_perfil.perfil_cliente_id, estado='en_pausa', monto_total=decimal.Decimal("25000"))
-        db.session.add_all([pedido_pagado, pedido_cancelado, pedido_pausa])
-        db.session.commit()
-
-        print("Creando conversación de soporte de ejemplo...")
-        conv_soporte = Conversacion(perfil_cliente_id=test_perfil.perfil_cliente_id, estado_actual="en_soporte", estado_soporte="pendiente")
-        db.session.add(conv_soporte)
-        db.session.commit()
-        msg1 = Mensaje(conversacion_id=conv_soporte.conversacion_id, remitente="usuario", cuerpo_mensaje="Hola, tengo una duda sobre mi último pedido pagado.")
-        db.session.add(msg1)
-        db.session.commit()
-        print("Datos de prueba iniciales creados.")
-
-        # =================================================================
-        # 2. CREAR PROVEEDORES
-        # =================================================================
-        print("Creando el ecosistema de 24 proveedores para cafeterías...")
-        
-        # --- Lista de Proveedores ---
-        providers_data = [
-            # Café
-            {"nombre": "Café del Sur", "info_contacto": "ventas@cafedelsur.cl", "calidad_servicio": 9},
-            {"nombre": "Tostaduría Andina", "info_contacto": "contacto@tostaduriaandina.cl", "calidad_servicio": 8},
-            {"nombre": "Café Místico del Elqui", "info_contacto": "ventas@cafemistico.cl", "calidad_servicio": 8},
-            # Lácteos
-            {"nombre": "Lácteos del Valle", "info_contacto": "pedidos@lacteosdelvalle.cl", "calidad_servicio": 8},
-            {"nombre": "Surlat", "info_contacto": "contacto@surlat.cl", "calidad_servicio": 9},
-            {"nombre": "Lecherías del Sur", "info_contacto": "ventas@lecheriasdelsur.com", "calidad_servicio": 7},
-            # Bebidas
-            {"nombre": "Distribuidora Andina", "info_contacto": "hablemos@koandina.com", "calidad_servicio": 9},
-            {"nombre": "CCU", "info_contacto": "servicio.cliente@ccu.cl", "calidad_servicio": 9},
-            {"nombre": "Embotelladora Bicentenario", "info_contacto": "contacto@embicentenario.cl", "calidad_servicio": 7},
-            # Panadería
-            {"nombre": "Panadería La Tradición", "info_contacto": "contacto@latradicion.cl", "calidad_servicio": 8},
-            {"nombre": "Delicias de la Abuela", "info_contacto": "pedidos@deliciasabuela.cl", "calidad_servicio": 9},
-            {"nombre": "BredenMaster", "info_contacto": "ventas.horeca@bredenmaster.com", "calidad_servicio": 8},
-            # Desechables
-            {"nombre": "Ecologico-Pack", "info_contacto": "ventas@ecopack.cl", "calidad_servicio": 8},
-            {"nombre": "Envases del Pacífico", "info_contacto": "contacto@envasespacifico.cl", "calidad_servicio": 7},
-            {"nombre": "BioPack Chile", "info_contacto": "info@biopack.cl", "calidad_servicio": 9},
-            # Limpieza
-            {"nombre": "Limpieza Total Pro", "info_contacto": "contacto@limpiezatotal.pro", "calidad_servicio": 8},
-            {"nombre": "Virutex", "info_contacto": "ventas@virutex.cl", "calidad_servicio": 9},
-            {"nombre": "DDI Chile", "info_contacto": "info@ddichile.cl", "calidad_servicio": 8},
-            # Abarrotes
-            {"nombre": "Alimentos del Campo", "info_contacto": "pedidos@alimentosdelcampo.com", "calidad_servicio": 7},
-            {"nombre": "Comercial Surtido", "info_contacto": "ventas@surtido.cl", "calidad_servicio": 8},
-            {"nombre": "Iansafood", "info_contacto": "contacto.foodservice@iansa.cl", "calidad_servicio": 9},
-            # Frutas y Verduras
-            {"nombre": "Frutas Frescas Lo Valledor", "info_contacto": "despachos@frutasfrescas.cl", "calidad_servicio": 8},
-            {"nombre": "La Vega Central Online", "info_contacto": "pedidos@lavegaonline.cl", "calidad_servicio": 7},
-            {"nombre": "CampoDirecto SpA", "info_contacto": "hola@campodirecto.cl", "calidad_servicio": 9},
-        ]
-        
-        providers = {}
-        for data in providers_data:
-            prov = Proveedor(**data)
-            db.session.add(prov)
-            providers[data['nombre']] = prov
-        
-        db.session.commit()
-        print("Proveedores creados.")
-
-        # =================================================================
-        # 3. CREAR PRODUCTOS, REQUISITOS Y PRECIOS
-        # =================================================================
-        print("Poblando el catálogo de productos con variantes y precios por volumen...")
+        def generate_price_breaks(base_price_str):
+            """Calcula precios con descuento para 10, 50, 100, 200, 500 y 10000 unidades."""
+            base_price = Decimal(base_price_str)
+            discounts = {
+                10: Decimal('0.95'),    # 5% de descuento
+                50: Decimal('0.92'),    # 8% de descuento
+                100: Decimal('0.88'),   # 12% de descuento
+                200: Decimal('0.85'),   # 15% de descuento
+                500: Decimal('0.82'),   # 18% de descuento
+                10000: Decimal('0.75')  # 25% de descuento
+            }
+            price_breaks = [{'cantidad_minima': 1, 'precio_unitario': base_price}]
+            for qty, multiplier in discounts.items():
+                discounted_price = (base_price * multiplier).quantize(Decimal('0'), rounding=ROUND_DOWN)
+                price_breaks.append({'cantidad_minima': qty, 'precio_unitario': discounted_price})
+            return price_breaks
 
         def add_mandatory_reqs(product_id):
-            """Función helper para añadir requisitos obligatorios a un producto."""
+            """Añade los requisitos de Cantidad, RUT y Dirección a un producto."""
             reqs = [
-                RequisitoProducto(producto_id=product_id, nombre_requisito="Cantidad", orden=97, tipo_dato="Numero", tipo_validacion="numero_entero_positivo"),
-                RequisitoProducto(producto_id=product_id, nombre_requisito="RUT para Factura", orden=98, tipo_dato="Texto", tipo_validacion="texto_simple"),
-                RequisitoProducto(producto_id=product_id, nombre_requisito="Dirección de Despacho", orden=99, tipo_dato="Texto", tipo_validacion="texto_simple")
+                RequisitoProducto(
+                    producto_id=product_id,
+                    nombre_requisito="Cantidad",
+                    orden=97,  # Un número alto para que se pregunte al final
+                    tipo_dato="Numero",
+                    tipo_validacion="numero_entero_positivo"
+                ),
+                RequisitoProducto(
+                    producto_id=product_id,
+                    nombre_requisito="RUT para Factura",
+                    orden=98,
+                    tipo_dato="Texto",
+                    tipo_validacion="texto_simple" # En el futuro, podrías crear una validación específica para RUT.
+                ),
+                RequisitoProducto(
+                    producto_id=product_id,
+                    nombre_requisito="Dirección de Despacho",
+                    orden=99,
+                    tipo_dato="Texto",
+                    tipo_validacion="texto_simple"
+                )
             ]
             db.session.add_all(reqs)
+        
+        print("-> Funciones de ayuda listas.")
 
+        # --- 4. Creación de Proveedores ---
+        print("\n[Paso 4/5] Creando el ecosistema de proveedores...")
+        
+        # DEFINIMOS 8 CATEGORÍAS CLARAS
+        # 1. Café e Infusiones
+        # 2. Lácteos y Bebidas
+        # 3. Panadería y Pastelería
+        # 4. Abarrotes y Conservas
+        # 5. Frutas y Verduras
+        # 6. Desechables y Packaging
+        # 7. Limpieza e Higiene
+        # 8. Congelados y Preparados
+
+        providers_data = [
+            # Proveedores para Café, Pastelería y Abarrotes
+            {"nombre": "Café del Sur", "info_contacto": "ventas@cafedelsur.cl", "calidad_servicio": 9},
+            {"nombre": "Tostaduría Andina", "info_contacto": "contacto@tostaduriaandina.cl", "calidad_servicio": 8},
+            {"nombre": "Delicias de la Abuela", "info_contacto": "pedidos@deliciasabuela.cl", "calidad_servicio": 9},
+            {"nombre": "Panadería La Tradición", "info_contacto": "contacto@latradicion.cl", "calidad_servicio": 8},
+            {"nombre": "Comercial Surtido", "info_contacto": "ventas@surtido.cl", "calidad_servicio": 8},
+            {"nombre": "Iansafood", "info_contacto": "contacto.foodservice@iansa.cl", "calidad_servicio": 9},
+            
+            # Proveedores para Lácteos y Bebidas
+            {"nombre": "Lácteos del Valle", "info_contacto": "pedidos@lacteosdelvalle.cl", "calidad_servicio": 8},
+            {"nombre": "Surlat", "info_contacto": "contacto@surlat.cl", "calidad_servicio": 9},
+            {"nombre": "Distribuidora Andina", "info_contacto": "hablemos@koandina.com", "calidad_servicio": 9},
+            {"nombre": "CCU", "info_contacto": "servicio.cliente@ccu.cl", "calidad_servicio": 9},
+
+            # Proveedores para Frutas y Verduras
+            {"nombre": "Frutas Frescas Lo Valledor", "info_contacto": "despachos@frutasfrescas.cl", "calidad_servicio": 8},
+            {"nombre": "CampoDirecto SpA", "info_contacto": "hola@campodirecto.cl", "calidad_servicio": 9},
+            
+            # Proveedores para Desechables y Limpieza
+            {"nombre": "Ecologico-Pack", "info_contacto": "ventas@ecopack.cl", "calidad_servicio": 8},
+            {"nombre": "BioPack Chile", "info_contacto": "info@biopack.cl", "calidad_servicio": 9},
+            {"nombre": "Limpieza Total Pro", "info_contacto": "contacto@limpiezatotal.pro", "calidad_servicio": 8},
+            {"nombre": "Virutex", "info_contacto": "ventas@virutex.cl", "calidad_servicio": 9},
+
+            # Proveedores para Congelados
+            {"nombre": "BredenMaster", "info_contacto": "ventas.horeca@bredenmaster.com", "calidad_servicio": 8},
+            {"nombre": "Frutos del Maipo", "info_contacto": "contacto@frutosdelmaipo.cl", "calidad_servicio": 9},
+        ]
+        
+        providers = {}
+        for data in providers_data:
+            prov = Proveedor(**data)
+            db.session.add(prov)
+            providers[data['nombre']] = prov
+        db.session.commit()
+        print(f"-> {len(providers_data)} proveedores creados exitosamente.")
+
+        # --- 5. Creación de Productos, Requisitos y Precios ---
+        print("\n[Paso 5/5] Poblando el catálogo de productos...")
+        
+        # =====================================================================
+        # CATEGORÍA 1: CAFÉ E INFUSIONES
+        # =====================================================================
+        
         # --- PRODUCTOS PARA "Café del Sur" ---
         prov_id = providers["Café del Sur"].proveedor_id
         
-        # Producto 1: Café en Grano
-        p = Producto(proveedor_id=prov_id, nombre_producto="Café de Especialidad en Grano", categoria="Café")
+        # Producto 1: Café de Especialidad en Grano
+        p = Producto(proveedor_id=prov_id, nombre_producto="Café de Especialidad en Grano", categoria="Café e Infusiones", descripcion="Grano 100% arábica de tueste artesanal. Notas a chocolate y frutos secos. Perfecto para espresso o filtrado.")
         db.session.add(p); db.session.commit()
         add_mandatory_reqs(p.producto_id)
-        db.session.add_all([
-            RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Bolsa 1kg', 'Bolsa 250g']),
-            RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Tostado", orden=2, opciones=['Medio', 'Oscuro'])
-        ])
-        db.session.add_all([
-            PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Bolsa 1kg', 'Tostado': 'Medio'}, cantidad_minima=1, precio_unitario="18990"),
-            PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Bolsa 1kg', 'Tostado': 'Medio'}, cantidad_minima=6, precio_unitario="17590"),
-            PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Bolsa 250g', 'Tostado': 'Medio'}, cantidad_minima=1, precio_unitario="6990"),
-        ])
+        db.session.add_all([RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Bolsa 1kg', 'Bolsa 250g']), RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Tostado", orden=2, opciones=['Medio', 'Oscuro'])])
+        db.session.commit()
+        for price_point in generate_price_breaks("18990"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Bolsa 1kg', 'Tostado': 'Medio'}, **price_point))
+        for price_point in generate_price_breaks("19500"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Bolsa 1kg', 'Tostado': 'Oscuro'}, **price_point))
+        for price_point in generate_price_breaks("6990"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Bolsa 250g', 'Tostado': 'Medio'}, **price_point))
+        for price_point in generate_price_breaks("7200"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Bolsa 250g', 'Tostado': 'Oscuro'}, **price_point))
 
-        # Producto 2: Café Molido
-        p = Producto(proveedor_id=prov_id, nombre_producto="Café Molido", categoria="Café")
+        # Producto 2: Café Molido Tradicional
+        p = Producto(proveedor_id=prov_id, nombre_producto="Café Molido Tradicional", categoria="Café e Infusiones", descripcion="Mezcla de granos arábica y robusta para un sabor intenso y equilibrado. Ideal para cafetera italiana o de goteo.")
         db.session.add(p); db.session.commit()
         add_mandatory_reqs(p.producto_id)
-        db.session.add_all([
-             RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Bolsa 500g', 'Bolsa 250g']),
-             RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Molienda", orden=2, opciones=['Fina (Espresso)', 'Media (Goteo)'])
-        ])
-        db.session.add_all([
-            PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Bolsa 500g', 'Molienda': 'Media (Goteo)'}, cantidad_minima=1, precio_unitario="9500"),
-            PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Bolsa 500g', 'Molienda': 'Media (Goteo)'}, cantidad_minima=10, precio_unitario="8990"),
-        ])
+        db.session.add_all([RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Bolsa 1kg', 'Bolsa 500g']), RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Molienda", orden=2, opciones=['Fina (Espresso)', 'Media (Goteo)'])])
+        db.session.commit()
+        for price_point in generate_price_breaks("14500"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Bolsa 1kg', 'Molienda': 'Media (Goteo)'}, **price_point))
+        for price_point in generate_price_breaks("8500"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Bolsa 500g', 'Molienda': 'Media (Goteo)'}, **price_point))
+        for price_point in generate_price_breaks("8900"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Bolsa 500g', 'Molienda': 'Fina (Espresso)'}, **price_point))
+
+        # Producto 3: Cápsulas de Café Compatibles
+        p = Producto(proveedor_id=prov_id, nombre_producto="Cápsulas de Café Compatibles Nespresso", categoria="Café e Infusiones", descripcion="Disfruta de nuestro mejor café en la comodidad de una cápsula. Intensidad y aroma garantizados.")
+        db.session.add(p); db.session.commit()
+        add_mandatory_reqs(p.producto_id)
+        db.session.add_all([RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Caja 50 unidades', 'Caja 100 unidades']), RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Intensidad", orden=2, opciones=['Suave (6)', 'Medio (8)', 'Intenso (10)'])])
+        db.session.commit()
+        for price_point in generate_price_breaks("19990"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Caja 50 unidades', 'Intensidad': 'Medio (8)'}, **price_point))
+        for price_point in generate_price_breaks("21990"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Caja 50 unidades', 'Intensidad': 'Intenso (10)'}, **price_point))
+        for price_point in generate_price_breaks("37990"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Caja 100 unidades', 'Intensidad': 'Medio (8)'}, **price_point))
+
+        # Producto 4: Té Negro Ceylan en Bolsitas
+        p = Producto(proveedor_id=prov_id, nombre_producto="Té Negro Ceylan Premium", categoria="Café e Infusiones", descripcion="Té negro de hoja larga de Sri Lanka. Sabor robusto y color profundo, perfecto para empezar el día.")
+        db.session.add(p); db.session.commit()
+        add_mandatory_reqs(p.producto_id)
+        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Caja 20 bolsitas', 'Caja 100 bolsitas']))
+        db.session.commit()
+        for price_point in generate_price_breaks("3500"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Caja 20 bolsitas'}, **price_point))
+        for price_point in generate_price_breaks("14990"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Caja 100 bolsitas'}, **price_point))
         
-        # ... (Se añadirían 3 productos más para este proveedor para cumplir el requisito de 5)
-        # Por brevedad, se muestra la estructura. El script completo sería extremadamente largo.
-        # Aquí se añadirían: Café Descafeinado, Té en Hojas, Cápsulas de Café.
+        # Producto 5: Infusión de Manzanilla y Miel
+        p = Producto(proveedor_id=prov_id, nombre_producto="Infusión de Manzanilla y Miel", categoria="Café e Infusiones", descripcion="Relajante infusión de flores de manzanilla con un toque dulce de miel natural. Sin cafeína.")
+        db.session.add(p); db.session.commit()
+        add_mandatory_reqs(p.producto_id)
+        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Caja 20 bolsitas', 'Caja 100 bolsitas']))
+        db.session.commit()
+        for price_point in generate_price_breaks("3800"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Caja 20 bolsitas'}, **price_point))
+        for price_point in generate_price_breaks("16500"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Caja 100 bolsitas'}, **price_point))
+
+        # Producto 6: Syrup Saborizante para Café
+        p = Producto(proveedor_id=prov_id, nombre_producto="Syrup Saborizante para Café", categoria="Café e Infusiones", descripcion="Añade un toque gourmet a tus bebidas. Perfecto para lattes, capuccinos y frappés. Botella de vidrio de 1L.")
+        db.session.add(p); db.session.commit()
+        add_mandatory_reqs(p.producto_id)
+        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Sabor", orden=1, opciones=['Vainilla', 'Caramelo', 'Avellana', 'Chocolate Blanco']))
+        db.session.commit()
+        for price_point in generate_price_breaks("8990"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Sabor': 'Vainilla'}, **price_point))
+        for price_point in generate_price_breaks("8990"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Sabor': 'Caramelo'}, **price_point))
+        for price_point in generate_price_breaks("9500"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Sabor': 'Avellana'}, **price_point))
+        for price_point in generate_price_breaks("9800"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Sabor': 'Chocolate Blanco'}, **price_point))
+        
+        # Producto 7: Chocolate en Polvo para Moka
+        p = Producto(proveedor_id=prov_id, nombre_producto="Chocolate en Polvo para Moka 33% Cacao", categoria="Café e Infusiones", descripcion="Polvo de cacao de alta calidad, semi-dulce, se disuelve fácilmente. Ideal para mokaccinos y chocolate caliente.")
+        db.session.add(p); db.session.commit()
+        add_mandatory_reqs(p.producto_id)
+        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Bolsa 1kg', 'Tarro 3kg']))
+        db.session.commit()
+        for price_point in generate_price_breaks("11500"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Bolsa 1kg'}, **price_point))
+        for price_point in generate_price_breaks("31000"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Tarro 3kg'}, **price_point))
+
+        # Producto 8: Café Descafeinado en Grano
+        p = Producto(proveedor_id=prov_id, nombre_producto="Café Descafeinado en Grano", categoria="Café e Infusiones", descripcion="Todo el sabor de un buen café, sin cafeína. Proceso de descafeinado natural al agua. Tueste medio.")
+        db.session.add(p); db.session.commit()
+        add_mandatory_reqs(p.producto_id)
+        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Bolsa 1kg', 'Bolsa 500g']))
+        db.session.commit()
+        for price_point in generate_price_breaks("21000"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Bolsa 1kg'}, **price_point))
+        for price_point in generate_price_breaks("11500"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Bolsa 500g'}, **price_point))
+
+        # Producto 9: Leche Condensada para Café Bombón
+        p = Producto(proveedor_id=prov_id, nombre_producto="Leche Condensada", categoria="Café e Infusiones", descripcion="Leche condensada cremosa y dulce, el ingrediente secreto para un café bombón perfecto y otras preparaciones.")
+        db.session.add(p); db.session.commit()
+        add_mandatory_reqs(p.producto_id)
+        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Tarro 397g', 'Botella 1kg']))
+        db.session.commit()
+        for price_point in generate_price_breaks("2500"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Tarro 397g'}, **price_point))
+        for price_point in generate_price_breaks("5500"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Botella 1kg'}, **price_point))
+        
+        # Producto 10: Café Instantáneo Liofilizado
+        p = Producto(proveedor_id=prov_id, nombre_producto="Café Instantáneo Liofilizado", categoria="Café e Infusiones", descripcion="Café premium instantáneo, proceso liofilizado que conserva el máximo aroma y sabor. Rápido y delicioso.")
+        db.session.add(p); db.session.commit()
+        add_mandatory_reqs(p.producto_id)
+        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Frasco 170g', 'Bolsa Doypack 500g']))
+        db.session.commit()
+        for price_point in generate_price_breaks("8900"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Frasco 170g'}, **price_point))
+        for price_point in generate_price_breaks("23500"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Bolsa Doypack 500g'}, **price_point))
         
         db.session.commit()
-        print("Productos para 'Café del Sur' cargados.")
+        print("-> Productos para 'Café del Sur' cargados.")
+
+        # --- PRODUCTOS PARA "Tostaduría Andina" ---
+        prov_id = providers["Tostaduría Andina"].proveedor_id
+        
+        # Producto 1: Café de Origen Colombia
+        p = Producto(proveedor_id=prov_id, nombre_producto="Café de Origen Único: Colombia", categoria="Café e Infusiones", descripcion="Grano de Caturra de la región de Huila. Notas cítricas y dulces con acidez brillante. Tueste medio claro.")
+        db.session.add(p); db.session.commit()
+        add_mandatory_reqs(p.producto_id)
+        db.session.add_all([RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Bolsa 1kg', 'Bolsa 500g']), RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Molienda", orden=2, opciones=['Grano Entero', 'Media (V60)', 'Fina (Aeropress)'])])
+        db.session.commit()
+        for price_point in generate_price_breaks("24000"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Bolsa 1kg', 'Molienda': 'Grano Entero'}, **price_point))
+        for price_point in generate_price_breaks("13000"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Bolsa 500g', 'Molienda': 'Grano Entero'}, **price_point))
+        for price_point in generate_price_breaks("13500"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Bolsa 500g', 'Molienda': 'Media (V60)'}, **price_point))
+
+        # Producto 2: Café de Origen Etiopía
+        p = Producto(proveedor_id=prov_id, nombre_producto="Café de Origen Único: Etiopía", categoria="Café e Infusiones", descripcion="Grano Heirloom de Yirgacheffe. Proceso lavado. Perfil floral y notas a té de bergamota y limón.")
+        db.session.add(p); db.session.commit()
+        add_mandatory_reqs(p.producto_id)
+        db.session.add_all([RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Bolsa 1kg', 'Bolsa 250g']), RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Molienda", orden=2, opciones=['Grano Entero', 'Gruesa (Prensa Francesa)'])])
+        db.session.commit()
+        for price_point in generate_price_breaks("28000"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Bolsa 1kg', 'Molienda': 'Grano Entero'}, **price_point))
+        for price_point in generate_price_breaks("8500"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Bolsa 250g', 'Molienda': 'Grano Entero'}, **price_point))
+
+        # Producto 3: Blend de la Casa Espresso
+        p = Producto(proveedor_id=prov_id, nombre_producto="Blend de la Casa 'Andino'", categoria="Café e Infusiones", descripcion="Mezcla especial de granos de Brasil y Perú, diseñada para un espresso balanceado, con cuerpo y crema persistente.")
+        db.session.add(p); db.session.commit()
+        add_mandatory_reqs(p.producto_id)
+        db.session.add_all([RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Bolsa 1kg']), RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Molienda", orden=2, opciones=['Grano Entero', 'Fina (Espresso)'])])
+        db.session.commit()
+        for price_point in generate_price_breaks("21000"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Bolsa 1kg', 'Molienda': 'Grano Entero'}, **price_point))
+        for price_point in generate_price_breaks("21500"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Bolsa 1kg', 'Molienda': 'Fina (Espresso)'}, **price_point))
+        
+        # Producto 4: Té Matcha Grado Ceremonial
+        p = Producto(proveedor_id=prov_id, nombre_producto="Té Matcha Grado Ceremonial", categoria="Café e Infusiones", descripcion="Polvo fino de té verde de Japón. Color verde vibrante y sabor suave, sin amargor. Ideal para lattes o beber solo.")
+        db.session.add(p); db.session.commit()
+        add_mandatory_reqs(p.producto_id)
+        db.session.add_all([RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Lata 30g', 'Bolsa 100g'])])
+        db.session.commit()
+        for price_point in generate_price_breaks("15000"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Lata 30g'}, **price_point))
+        for price_point in generate_price_breaks("42000"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Bolsa 100g'}, **price_point))
+        
+        # Producto 5: Rooibos Vainilla en Hojas
+        p = Producto(proveedor_id=prov_id, nombre_producto="Rooibos Vainilla en Hojas", categoria="Café e Infusiones", descripcion="Infusión sudafricana naturalmente sin cafeína, con trozos de vaina de vainilla. Dulce y reconfortante.")
+        db.session.add(p); db.session.commit()
+        add_mandatory_reqs(p.producto_id)
+        db.session.add_all([RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Bolsa 100g', 'Bolsa 250g'])])
+        db.session.commit()
+        for price_point in generate_price_breaks("7500"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Bolsa 100g'}, **price_point))
+        for price_point in generate_price_breaks("16000"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Bolsa 250g'}, **price_point))
+        
+        # Producto 6: Cold Brew Concentrate
+        p = Producto(proveedor_id=prov_id, nombre_producto="Concentrado de Cold Brew", categoria="Café e Infusiones", descripcion="Café extraído en frío por 18 horas. Suave, bajo en acidez y muy versátil. Solo añade agua o leche.")
+        db.session.add(p); db.session.commit()
+        add_mandatory_reqs(p.producto_id)
+        db.session.add_all([RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Botella 1L', 'Bag-in-Box 5L'])])
+        db.session.commit()
+        for price_point in generate_price_breaks("12000"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Botella 1L'}, **price_point))
+        for price_point in generate_price_breaks("55000"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Bag-in-Box 5L'}, **price_point))
+        
+        # Producto 7: Café en grano Geisha de Panamá
+        p = Producto(proveedor_id=prov_id, nombre_producto="Café Exclusivo: Geisha de Panamá", categoria="Café e Infusiones", descripcion="Lote exclusivo de la aclamada variedad Geisha. Perfil de sabor complejo con notas a jazmín, papaya y mandarina.")
+        db.session.add(p); db.session.commit()
+        add_mandatory_reqs(p.producto_id)
+        db.session.add_all([RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Bolsa 150g'])])
+        db.session.commit()
+        for price_point in generate_price_breaks("35000"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Bolsa 150g'}, **price_point))
+        
+        # Producto 8: Cascara de Café (Té de Café)
+        p = Producto(proveedor_id=prov_id, nombre_producto="Infusión de Cáscara de Café", categoria="Café e Infusiones", descripcion="Pulpa deshidratada del fruto del café. Una infusión única con notas a frutos rojos, hibisco y un toque dulce.")
+        db.session.add(p); db.session.commit()
+        add_mandatory_reqs(p.producto_id)
+        db.session.add_all([RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Bolsa 100g', 'Bolsa 250g'])])
+        db.session.commit()
+        for price_point in generate_price_breaks("6500"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Bolsa 100g'}, **price_point))
+        for price_point in generate_price_breaks("14000"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Bolsa 250g'}, **price_point))
+        
+        # Producto 9: Café de Origen Perú
+        p = Producto(proveedor_id=prov_id, nombre_producto="Café de Origen Único: Perú", categoria="Café e Infusiones", descripcion="Grano de Cajamarca, cultivado en altura. Perfil de sabor suave con notas a caramelo, nuez y un final limpio.")
+        db.session.add(p); db.session.commit()
+        add_mandatory_reqs(p.producto_id)
+        db.session.add_all([RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Bolsa 1kg', 'Bolsa 500g']), RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Molienda", orden=2, opciones=['Grano Entero', 'Media (Goteo)'])])
+        db.session.commit()
+        for price_point in generate_price_breaks("22500"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Bolsa 1kg', 'Molienda': 'Grano Entero'}, **price_point))
+        for price_point in generate_price_breaks("12000"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Bolsa 500g', 'Molienda': 'Media (Goteo)'}, **price_point))
+
+        # Producto 10: Filtros de Papel V60
+        p = Producto(proveedor_id=prov_id, nombre_producto="Filtros de Papel para V60", categoria="Café e Infusiones", descripcion="Filtros de papel blanco, cónicos, diseñados para el método de goteo V60. No alteran el sabor del café.")
+        db.session.add(p); db.session.commit()
+        add_mandatory_reqs(p.producto_id)
+        db.session.add_all([RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Tamaño", orden=1, opciones=['01 (1-2 tazas)', '02 (1-4 tazas)']), RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=2, opciones=['Paquete 100 unidades'])])
+        db.session.commit()
+        for price_point in generate_price_breaks("6000"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Tamaño': '01 (1-2 tazas)', 'Formato': 'Paquete 100 unidades'}, **price_point))
+        for price_point in generate_price_breaks("7000"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Tamaño': '02 (1-4 tazas)', 'Formato': 'Paquete 100 unidades'}, **price_point))
+
+        db.session.commit()
+        print("-> Productos para 'Tostaduría Andina' cargados.")
+
+        # =====================================================================
+        # CATEGORÍA 2: LÁCTEOS Y BEBIDAS
+        # =====================================================================
 
         # --- PRODUCTOS PARA "Lácteos del Valle" ---
         prov_id = providers["Lácteos del Valle"].proveedor_id
         
-        # Producto 1: Leche UHT
-        p = Producto(proveedor_id=prov_id, nombre_producto="Leche UHT 1 Litro", categoria="Lácteos")
+        # Producto 1: Leche Entera UHT
+        p = Producto(proveedor_id=prov_id, nombre_producto="Leche Entera UHT Larga Vida", categoria="Lácteos y Bebidas", descripcion="Leche 100% de vaca, procesada para larga duración sin refrigeración. Ideal por su cremosidad para café y batidos.")
         db.session.add(p); db.session.commit()
         add_mandatory_reqs(p.producto_id)
-        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Tipo", orden=1, opciones=['Entera', 'Descremada', 'Sin Lactosa']))
-        db.session.add_all([
-            PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Tipo': 'Entera'}, cantidad_minima=1, precio_unitario="1250"),
-            PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Tipo': 'Entera'}, cantidad_minima=12, precio_unitario="1150"),
-            PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Tipo': 'Descremada'}, cantidad_minima=1, precio_unitario="1290"),
-            PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Tipo': 'Sin Lactosa'}, cantidad_minima=1, precio_unitario="1450"),
-        ])
-
-        # Producto 2: Crema de Leche
-        p = Producto(proveedor_id=prov_id, nombre_producto="Crema de Leche UHT", categoria="Lácteos")
-        db.session.add(p); db.session.commit()
-        add_mandatory_reqs(p.producto_id)
-        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['200ml', '1 Litro']))
-        db.session.add_all([
-            PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': '200ml'}, cantidad_minima=1, precio_unitario="990"),
-            PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': '200ml'}, cantidad_minima=24, precio_unitario="920"),
-            PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': '1 Litro'}, cantidad_minima=1, precio_unitario="3990"),
-        ])
-
-        # ... (Se añadirían 3 productos más: Mantequilla, Leche de Almendras, Yogurt Natural)
-
+        db.session.add_all([RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Caja 1L', 'Caja 200ml'])])
         db.session.commit()
-        print("Productos para 'Lácteos del Valle' cargados.")
-
+        for price_point in generate_price_breaks("1250"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Caja 1L'}, **price_point))
+        for price_point in generate_price_breaks("650"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Caja 200ml'}, **price_point))
+        
+        # Producto 2: Leche Descremada UHT
+        p = Producto(proveedor_id=prov_id, nombre_producto="Leche Descremada UHT Larga Vida", categoria="Lácteos y Bebidas", descripcion="Leche ligera, 0% materia grasa, con todas las proteínas y calcio. Perfecta para opciones saludables.")
+        db.session.add(p); db.session.commit()
+        add_mandatory_reqs(p.producto_id)
+        db.session.add_all([RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Caja 1L'])])
+        db.session.commit()
+        for price_point in generate_price_breaks("1290"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Caja 1L'}, **price_point))
+        
+        # Producto 3: Leche Sin Lactosa UHT
+        p = Producto(proveedor_id=prov_id, nombre_producto="Leche Sin Lactosa UHT Larga Vida", categoria="Lácteos y Bebidas", descripcion="Leche de fácil digestión, ideal para clientes con intolerancia a la lactosa, sin sacrificar el sabor.")
+        db.session.add(p); db.session.commit()
+        add_mandatory_reqs(p.producto_id)
+        db.session.add_all([RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Tipo", orden=1, opciones=['Entera', 'Semi-descremada'])])
+        db.session.commit()
+        for price_point in generate_price_breaks("1450"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Tipo': 'Entera'}, **price_point))
+        for price_point in generate_price_breaks("1480"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Tipo': 'Semi-descremada'}, **price_point))
+        
+        # Producto 4: Crema de Leche para Batir
+        p = Producto(proveedor_id=prov_id, nombre_producto="Crema de Leche para Batir UHT", categoria="Lácteos y Bebidas", descripcion="Crema con 35% de materia grasa, ideal para montar, crear mousses y dar un toque final a postres y cafés.")
+        db.session.add(p); db.session.commit()
+        add_mandatory_reqs(p.producto_id)
+        db.session.add_all([RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Caja 1L', 'Caja 200ml'])])
+        db.session.commit()
+        for price_point in generate_price_breaks("4500"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Caja 1L'}, **price_point))
+        for price_point in generate_price_breaks("1500"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Caja 200ml'}, **price_point))
+        
+        # Producto 5: Yogurt Natural Sin Azúcar
+        p = Producto(proveedor_id=prov_id, nombre_producto="Yogurt Natural Sin Azúcar", categoria="Lácteos y Bebidas", descripcion="Yogurt cremoso y ácido, elaborado solo con leche y cultivos lácticos. Base perfecta para bowls y smoothies.")
+        db.session.add(p); db.session.commit()
+        add_mandatory_reqs(p.producto_id)
+        db.session.add_all([RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Pote 1kg', 'Pote 150g'])])
+        db.session.commit()
+        for price_point in generate_price_breaks("3800"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Pote 1kg'}, **price_point))
+        for price_point in generate_price_breaks("850"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Pote 150g'}, **price_point))
+        
+        # Producto 6: Mantequilla con Sal
+        p = Producto(proveedor_id=prov_id, nombre_producto="Mantequilla Sureña con Sal", categoria="Lácteos y Bebidas", descripcion="Mantequilla de sabor intenso y textura suave, elaborada con crema fresca de leche. Ideal para tostadas y repostería.")
+        db.session.add(p); db.session.commit()
+        add_mandatory_reqs(p.producto_id)
+        db.session.add_all([RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Barra 250g', 'Barra 125g'])])
+        db.session.commit()
+        for price_point in generate_price_breaks("3200"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Barra 250g'}, **price_point))
+        for price_point in generate_price_breaks("1800"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Barra 125g'}, **price_point))
+        
+        # Producto 7: Bebida de Almendras
+        p = Producto(proveedor_id=prov_id, nombre_producto="Bebida de Almendras Original", categoria="Lácteos y Bebidas", descripcion="Alternativa vegetal a la leche, ligera y con un suave sabor a almendras tostadas. Fortificada con vitaminas.")
+        db.session.add(p); db.session.commit()
+        add_mandatory_reqs(p.producto_id)
+        db.session.add_all([RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Endulzado", orden=1, opciones=['Con Azúcar', 'Sin Azúcar'])])
+        db.session.commit()
+        for price_point in generate_price_breaks("2500"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Endulzado': 'Con Azúcar'}, **price_point))
+        for price_point in generate_price_breaks("2650"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Endulzado': 'Sin Azúcar'}, **price_point))
+        
+        # Producto 8: Manjar Tradicional
+        p = Producto(proveedor_id=prov_id, nombre_producto="Manjar Tradicional Estilo Campo", categoria="Lácteos y Bebidas", descripcion="Dulce de leche espeso y de color oscuro, de cocción lenta. Ideal para rellenar, decorar o acompañar postres.")
+        db.session.add(p); db.session.commit()
+        add_mandatory_reqs(p.producto_id)
+        db.session.add_all([RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Pote 1kg', 'Bolsa Pastelera 1kg'])])
+        db.session.commit()
+        for price_point in generate_price_breaks("6500"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Pote 1kg'}, **price_point))
+        for price_point in generate_price_breaks("6800"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Bolsa Pastelera 1kg'}, **price_point))
+        
+        # Producto 9: Leche Chocolatada
+        p = Producto(proveedor_id=prov_id, nombre_producto="Leche Chocolatada Lista para Servir", categoria="Lácteos y Bebidas", descripcion="La combinación perfecta de leche fresca y cacao, lista para disfrutar fría o caliente. Un clásico favorito.")
+        db.session.add(p); db.session.commit()
+        add_mandatory_reqs(p.producto_id)
+        db.session.add_all([RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Caja 1L', 'Caja 200ml'])])
+        db.session.commit()
+        for price_point in generate_price_breaks("1600"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Caja 1L'}, **price_point))
+        for price_point in generate_price_breaks("750"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Caja 200ml'}, **price_point))
+        
+        # Producto 10: Quesillo Fresco
+        p = Producto(proveedor_id=prov_id, nombre_producto="Quesillo Fresco del Día", categoria="Lácteos y Bebidas", descripcion="Queso fresco, bajo en grasa y sal. De textura suave y sabor lácteo, perfecto para ensaladas y sándwiches.")
+        db.session.add(p); db.session.commit()
+        add_mandatory_reqs(p.producto_id)
+        db.session.add_all([RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Pieza 400g'])])
+        db.session.commit()
+        for price_point in generate_price_breaks("4200"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Pieza 400g'}, **price_point))
+        
+        db.session.commit()
+        print("-> Productos para 'Lácteos del Valle' cargados.")
+        
         # --- PRODUCTOS PARA "Distribuidora Andina" ---
         prov_id = providers["Distribuidora Andina"].proveedor_id
-        
-        # Producto 1: Coca-Cola
-        p = Producto(proveedor_id=prov_id, nombre_producto="Bebida Gaseosa Coca-Cola", categoria="Bebidas")
+
+        # Producto 1: Bebida Coca-Cola
+        p = Producto(proveedor_id=prov_id, nombre_producto="Bebida Gaseosa Coca-Cola", categoria="Lácteos y Bebidas", descripcion="El clásico e inconfundible sabor de Coca-Cola, la bebida más famosa del mundo. Perfecta para cualquier ocasión.")
         db.session.add(p); db.session.commit()
         add_mandatory_reqs(p.producto_id)
-        db.session.add_all([
-            RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Sabor", orden=1, opciones=['Original', 'Sin Azúcar']),
-            RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=2, opciones=['Lata 350cc', 'Vidrio 237cc'])
-        ])
-        db.session.add_all([
-            PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Sabor': 'Original', 'Formato': 'Lata 350cc'}, cantidad_minima=1, precio_unitario="850"),
-            PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Sabor': 'Original', 'Formato': 'Lata 350cc'}, cantidad_minima=24, precio_unitario="720"),
-            PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Sabor': 'Sin Azúcar', 'Formato': 'Vidrio 237cc'}, cantidad_minima=1, precio_unitario="700"),
-        ])
+        db.session.add_all([RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Sabor", orden=1, opciones=['Original', 'Sin Azúcar', 'Light']), RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=2, opciones=['Lata 350cc', 'Botella 591cc', 'Botella Vidrio 237cc'])])
+        db.session.commit()
+        for price_point in generate_price_breaks("850"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Sabor': 'Original', 'Formato': 'Lata 350cc'}, **price_point))
+        for price_point in generate_price_breaks("900"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Sabor': 'Sin Azúcar', 'Formato': 'Lata 350cc'}, **price_point))
+        for price_point in generate_price_breaks("1200"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Sabor': 'Original', 'Formato': 'Botella 591cc'}, **price_point))
+        for price_point in generate_price_breaks("700"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Sabor': 'Original', 'Formato': 'Botella Vidrio 237cc'}, **price_point))
+
+        # Producto 2: Agua Mineral Benedictino
+        p = Producto(proveedor_id=prov_id, nombre_producto="Agua Mineral Benedictino", categoria="Lácteos y Bebidas", descripcion="Agua mineral de vertiente, pura y natural. Una opción refrescante y saludable para tus clientes.")
+        db.session.add(p); db.session.commit()
+        add_mandatory_reqs(p.producto_id)
+        db.session.add_all([RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Gas", orden=1, opciones=['Con Gas', 'Sin Gas']), RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=2, opciones=['Botella 500ml', 'Botella 1.5L'])])
+        db.session.commit()
+        for price_point in generate_price_breaks("750"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Gas': 'Sin Gas', 'Formato': 'Botella 500ml'}, **price_point))
+        for price_point in generate_price_breaks("800"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Gas': 'Con Gas', 'Formato': 'Botella 500ml'}, **price_point))
+        for price_point in generate_price_breaks("1300"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Gas': 'Sin Gas', 'Formato': 'Botella 1.5L'}, **price_point))
         
-        # ... (Se añadirían 4 productos más: Agua Mineral Benedictino, Jugo Andina del Valle, Sprite, Fanta)
+        # ... (Resto de productos para Distribuidora Andina y otros proveedores de la categoría) ...
 
         db.session.commit()
-        print("Productos para 'Distribuidora Andina' cargados.")
-        
-        # --- PRODUCTOS PARA "Panadería La Tradición" ---
-        prov_id = providers["Panadería La Tradición"].proveedor_id
-        
-        # Producto 1: Croissant de Mantequilla
-        p = Producto(proveedor_id=prov_id, nombre_producto="Croissant de Mantequilla", categoria="Pastelería")
-        db.session.add(p); db.session.commit()
-        add_mandatory_reqs(p.producto_id)
-        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Estado", orden=1, opciones=['Congelado', 'Horneado del día']))
-        db.session.add_all([
-            PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Estado': 'Horneado del día'}, cantidad_minima=12, precio_unitario="1100"),
-            PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Estado': 'Congelado'}, cantidad_minima=20, precio_unitario="850"),
-        ])
-        
-        # ... (Se añadirían 4 productos más: Medialunas, Brownie de Chocolate, Queque de Limón, Pan Ciabatta)
+        print("-> Productos para 'Distribuidora Andina' cargados.")
 
-        db.session.commit()
-        print("Productos para 'Panadería La Tradición' cargados.")
+        # =====================================================================
+        # CATEGORÍA 3: PANADERÍA Y PASTELERÍA
+        # =====================================================================
 
-        # --- PRODUCTOS PARA "Ecologico-Pack" ---
-        prov_id = providers["Ecologico-Pack"].proveedor_id
-
-        # Producto 1: Vaso de Cartón
-        p = Producto(proveedor_id=prov_id, nombre_producto="Vaso de Cartón para Bebida Caliente", categoria="Desechables")
-        db.session.add(p); db.session.commit()
-        add_mandatory_reqs(p.producto_id)
-        db.session.add_all([
-            RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Tamaño", orden=1, opciones=['8oz (240cc)', '12oz (360cc)']),
-            RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Diseño", orden=2, opciones=['Blanco', 'Kraft'])
-        ])
-        db.session.add_all([
-            PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Tamaño': '8oz (240cc)', 'Diseño': 'Kraft'}, cantidad_minima=100, precio_unitario="95"),
-            PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Tamaño': '8oz (240cc)', 'Diseño': 'Kraft'}, cantidad_minima=1000, precio_unitario="80"),
-            PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Tamaño': '12oz (360cc)', 'Diseño': 'Kraft'}, cantidad_minima=100, precio_unitario="120"),
-        ])
-        
-        # ... (Se añadirían 4 productos más: Tapas para Vaso, Removedores de Madera, Servilletas, Bolsas de Papel)
-        
-        db.session.commit()
-        print("Productos para 'Ecologico-Pack' cargados.")
-
-        # #############################################################################
-        # CATEGORÍA: BEBIDAS Y GASEOSAS
-        # #############################################################################
-        print("Cargando productos de Bebidas y Gaseosas...")
-
-        # --- Proveedor 7: Distribuidora Andina ---
-        prov_id = providers["Distribuidora Andina"].proveedor_id
-
-        # P7.1: Coca-Cola
-        p = Producto(proveedor_id=prov_id, nombre_producto="Bebida Gaseosa Coca-Cola", categoria="Bebidas", sku="DA-COKE-001")
-        db.session.add(p); db.session.commit()
-        add_mandatory_reqs(p.producto_id)
-        db.session.add_all([
-            RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Sabor", orden=1, opciones=['Original', 'Sin Azúcar', 'Light']),
-            RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=2, opciones=['Lata 350cc', 'Vidrio 237cc', 'Botella 591cc'])
-        ])
-        db.session.add_all([
-            PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Sabor': 'Original', 'Formato': 'Lata 350cc'}, cantidad_minima=1, precio_unitario="850"),
-            PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Sabor': 'Original', 'Formato': 'Lata 350cc'}, cantidad_minima=24, precio_unitario="720"),
-            PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Sabor': 'Sin Azúcar', 'Formato': 'Vidrio 237cc'}, cantidad_minima=1, precio_unitario="700"),
-        ])
-
-        # P7.2: Agua Mineral Benedictino
-        p = Producto(proveedor_id=prov_id, nombre_producto="Agua Mineral Benedictino", categoria="Bebidas", sku="DA-AGUA-001")
-        db.session.add(p); db.session.commit()
-        add_mandatory_reqs(p.producto_id)
-        db.session.add_all([
-            RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Gas", orden=1, opciones=['Con Gas', 'Sin Gas']),
-            RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=2, opciones=['Botella 500ml', 'Botella 1.5L'])
-        ])
-        db.session.add_all([
-            PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Gas': 'Sin Gas', 'Formato': 'Botella 500ml'}, cantidad_minima=1, precio_unitario="750"),
-            PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Gas': 'Sin Gas', 'Formato': 'Botella 500ml'}, cantidad_minima=12, precio_unitario="650"),
-        ])
-
-        # P7.3: Jugo Andina del Valle
-        p = Producto(proveedor_id=prov_id, nombre_producto="Jugo Andina del Valle", categoria="Bebidas", sku="DA-JUGO-001")
-        db.session.add(p); db.session.commit()
-        add_mandatory_reqs(p.producto_id)
-        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Sabor", orden=1, opciones=['Naranja', 'Durazno', 'Piña']))
-        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=2, opciones=['Caja 200ml', 'Botella 1L']))
-        db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Sabor': 'Naranja', 'Formato': 'Caja 200ml'}, cantidad_minima=1, precio_unitario="600"))
-
-        # P7.4: Sprite
-        p = Producto(proveedor_id=prov_id, nombre_producto="Bebida Gaseosa Sprite", categoria="Bebidas", sku="DA-SPRITE-001")
-        db.session.add(p); db.session.commit()
-        add_mandatory_reqs(p.producto_id)
-        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Versión", orden=1, opciones=['Regular', 'Zero']))
-        db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Versión': 'Zero'}, cantidad_minima=1, precio_unitario="850"))
-
-        # P7.5: Powerade
-        p = Producto(proveedor_id=prov_id, nombre_producto="Bebida Isotónica Powerade", categoria="Bebidas", sku="DA-POWER-001")
-        db.session.add(p); db.session.commit()
-        add_mandatory_reqs(p.producto_id)
-        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Sabor", orden=1, opciones=['Frutas Tropicales', 'Mountain Blast', 'Naranja']))
-        db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Sabor': 'Mountain Blast'}, cantidad_minima=1, precio_unitario="1100"))
-
-        # --- Proveedor 8: CCU --- (Competidor de Bebidas)
-        prov_id = providers["CCU"].proveedor_id
-        # (Se repetiría una estructura similar con 5 productos: Pepsi, Agua Cachantun, Jugos Watt's, Bilz, Pap)
-
-        # --- Proveedor 9: Embotelladora Bicentenario --- (Competidor de Bebidas)
-        prov_id = providers["Embotelladora Bicentenario"].proveedor_id
-        # (Se repetiría una estructura similar con 5 productos: Bebida Cola "Bicentenario", Agua Purificada "Ríos de Chile", etc.)
-
-        db.session.commit()
-        print("...Productos de Bebidas y Gaseosas cargados.")
-
-
-        # #############################################################################
-        # CATEGORÍA: PANADERÍA Y PASTELERÍA
-        # #############################################################################
-        print("Cargando productos de Panadería y Pastelería...")
-
-        # --- Proveedor 10: Panadería La Tradición ---
-        prov_id = providers["Panadería La Tradición"].proveedor_id
-
-        # P10.1: Croissant de Mantequilla
-        p = Producto(proveedor_id=prov_id, nombre_producto="Croissant de Mantequilla", categoria="Pastelería", sku="PT-CROIS-001")
-        db.session.add(p); db.session.commit()
-        add_mandatory_reqs(p.producto_id)
-        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Estado", orden=1, opciones=['Horneado del día', 'Masa cruda congelada']))
-        db.session.add_all([
-            PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Estado': 'Horneado del día'}, cantidad_minima=12, precio_unitario="1100"),
-            PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Estado': 'Horneado del día'}, cantidad_minima=50, precio_unitario="990"),
-            PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Estado': 'Masa cruda congelada'}, cantidad_minima=20, precio_unitario="850"),
-        ])
-
-        # P10.2: Medialunas Argentinas
-        p = Producto(proveedor_id=prov_id, nombre_producto="Medialunas Argentinas", categoria="Pastelería", sku="PT-MEDIA-001")
-        db.session.add(p); db.session.commit()
-        add_mandatory_reqs(p.producto_id)
-        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Tipo", orden=1, opciones=['De grasa', 'De manteca']))
-        db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Tipo': 'De manteca'}, cantidad_minima=12, precio_unitario="900"))
-
-        # P10.3: Brownie de Chocolate
-        p = Producto(proveedor_id=prov_id, nombre_producto="Brownie de Chocolate con Nueces", categoria="Pastelería", sku="PT-BROWNIE-001")
-        db.session.add(p); db.session.commit()
-        add_mandatory_reqs(p.producto_id)
-        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Unidad', 'Plancha (12 porciones)']))
-        db.session.add_all([
-            PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Unidad'}, cantidad_minima=1, precio_unitario="1800"),
-            PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Plancha (12 porciones)'}, cantidad_minima=1, precio_unitario="19000"),
-        ])
-
-        # P10.4: Pan Ciabatta
-        p = Producto(proveedor_id=prov_id, nombre_producto="Pan Ciabatta para Sándwich", categoria="Panadería", sku="PT-CIAB-001")
-        db.session.add(p); db.session.commit()
-        add_mandatory_reqs(p.producto_id)
-        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Cocción", orden=1, opciones=['Precocido', 'Horneado']))
-        db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Cocción': 'Horneado'}, cantidad_minima=10, precio_unitario="700"))
-
-        # P10.5: Queque de Limón
-        p = Producto(proveedor_id=prov_id, nombre_producto="Queque de Limón con Semillas de Amapola", categoria="Pastelería", sku="PT-QUEQUE-001")
-        db.session.add(p); db.session.commit()
-        add_mandatory_reqs(p.producto_id)
-        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Entero (8 porciones)', 'Trozo individual']))
-        db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Entero (8 porciones)'}, cantidad_minima=1, precio_unitario="9990"))
-
-        # --- Proveedor 11: Delicias de la Abuela --- (Competidor de Pastelería)
+        # --- PRODUCTOS PARA "Delicias de la Abuela" ---
         prov_id = providers["Delicias de la Abuela"].proveedor_id
-        # (Se repetiría una estructura similar con 5 productos: Torta de Mil Hojas, Pie de Limón, Alfajores, etc.)
 
-        # --- Proveedor 12: BredenMaster --- (Competidor de Congelados)
-        prov_id = providers["BredenMaster"].proveedor_id
-        # (Se repetiría una estructura similar con 5 productos: Donuts congeladas, Muffins congelados, Empanadas congeladas, etc.)
-
+        # Producto 1: Torta de Milhojas
+        p = Producto(proveedor_id=prov_id, nombre_producto="Torta de Milhojas Manjar", categoria="Panadería y Pastelería", descripcion="Clásica torta de finas hojas de masa crujiente, rellena con abundante manjar casero y un toque de crema.")
+        db.session.add(p); db.session.commit()
+        add_mandatory_reqs(p.producto_id)
+        db.session.add_all([RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Tamaño", orden=1, opciones=['15 personas', '25 personas'])])
         db.session.commit()
-        print("...Productos de Panadería y Pastelería cargados.")
+        for price_point in generate_price_breaks("25000"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Tamaño': '15 personas'}, **price_point))
+        for price_point in generate_price_breaks("38000"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Tamaño': '25 personas'}, **price_point))
 
-        # #############################################################################
-        # CATEGORÍA: INSUMOS DESECHABLES Y PACKAGING
-        # #############################################################################
-        print("Cargando productos de Insumos Desechables y Packaging...")
-
-        # --- Proveedor 13: Ecologico-Pack ---
-        prov_id = providers["Ecologico-Pack"].proveedor_id
-
-        # P13.1: Vaso de Cartón para Bebida Caliente
-        p = Producto(proveedor_id=prov_id, nombre_producto="Vaso de Cartón para Bebida Caliente", categoria="Desechables", sku="EP-VASO-001")
+        # Producto 2: Pie de Limón
+        p = Producto(proveedor_id=prov_id, nombre_producto="Pie de Limón con Merengue", categoria="Panadería y Pastelería", descripcion="Base de galleta, relleno cremoso y ácido de limón, coronado con un merengue italiano perfectamente dorado.")
         db.session.add(p); db.session.commit()
         add_mandatory_reqs(p.producto_id)
-        db.session.add_all([
-            RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Tamaño", orden=1, opciones=['8oz (240cc)', '12oz (360cc)', '16oz (480cc)']),
-            RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Diseño", orden=2, opciones=['Blanco', 'Kraft (Café)'])
-        ])
-        db.session.add_all([
-            PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Tamaño': '8oz (240cc)', 'Diseño': 'Kraft (Café)'}, cantidad_minima=100, precio_unitario="95"),
-            PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Tamaño': '8oz (240cc)', 'Diseño': 'Kraft (Café)'}, cantidad_minima=1000, precio_unitario="80"),
-            PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Tamaño': '12oz (360cc)', 'Diseño': 'Kraft (Café)'}, cantidad_minima=100, precio_unitario="120"),
-        ])
-
-        # P13.2: Tapa para Vaso
-        p = Producto(proveedor_id=prov_id, nombre_producto="Tapa Viajera para Vaso de Cartón", categoria="Desechables", sku="EP-TAPA-001")
-        db.session.add(p); db.session.commit()
-        add_mandatory_reqs(p.producto_id)
-        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Tamaño Compatible", orden=1, opciones=['8oz', '12oz/16oz']))
-        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Color", orden=2, opciones=['Blanco', 'Negro']))
-        db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Tamaño Compatible': '8oz', 'Color': 'Negro'}, cantidad_minima=100, precio_unitario="55"))
-
-        # P13.3: Removedores de Madera
-        p = Producto(proveedor_id=prov_id, nombre_producto="Removedores de Madera", categoria="Desechables", sku="EP-REMOVEDOR-001")
-        db.session.add(p); db.session.commit()
-        add_mandatory_reqs(p.producto_id)
-        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Caja 1000 unidades', 'Caja 5000 unidades']))
-        db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Caja 1000 unidades'}, cantidad_minima=1, precio_unitario="5990"))
-
-        # P13.4: Servilletas Ecológicas
-        p = Producto(proveedor_id=prov_id, nombre_producto="Servilletas Ecológicas", categoria="Desechables", sku="EP-SERVIL-001")
-        db.session.add(p); db.session.commit()
-        add_mandatory_reqs(p.producto_id)
-        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['33x33cm (Paquete 500 un.)', '24x24cm (Paquete 1000 un.)']))
-        db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': '33x33cm (Paquete 500 un.)'}, cantidad_minima=1, precio_unitario="8900"))
-
-        # P13.5: Bolsas de Papel Kraft
-        p = Producto(proveedor_id=prov_id, nombre_producto="Bolsas de Papel Kraft", categoria="Desechables", sku="EP-BOLSA-001")
-        db.session.add(p); db.session.commit()
-        add_mandatory_reqs(p.producto_id)
-        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Tamaño", orden=1, opciones=['Pequeña (1 vaso)', 'Mediana (2 vasos + algo)']))
-        db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Tamaño': 'Mediana (2 vasos + algo)'}, cantidad_minima=100, precio_unitario="250"))
-
-        # --- Proveedor 14: Envases del Pacífico --- (Competidor de Desechables)
-        prov_id = providers["Envases del Pacífico"].proveedor_id
-        # (Se repetiría una estructura similar con 5 productos: Potes Plásticos, Cubiertos Plásticos, Film Alusa, etc.)
-
-        # --- Proveedor 15: BioPack Chile --- (Competidor de Desechables)
-        prov_id = providers["BioPack Chile"].proveedor_id
-        # (Se repetiría una estructura similar con 5 productos: Vasos Compostables PLA, Bombillas de Papel, Contenedores de Bagazo, etc.)
-
+        db.session.add_all([RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Tamaño", orden=1, opciones=['Individual', 'Entero (8 porciones)'])])
         db.session.commit()
-        print("...Productos de Insumos Desechables y Packaging cargados.")
+        for price_point in generate_price_breaks("3500"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Tamaño': 'Individual'}, **price_point))
+        for price_point in generate_price_breaks("22000"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Tamaño': 'Entero (8 porciones)'}, **price_point))
 
-        # #############################################################################
-        # CATEGORÍA: INSUMOS DE LIMPIEZA
-        # #############################################################################
-        print("Cargando productos de Insumos de Limpieza...")
-
-        # --- Proveedor 16: Limpieza Total Pro ---
-        prov_id = providers["Limpieza Total Pro"].proveedor_id
-
-        # P16.1: Limpiador Desinfectante Amonio Cuaternario
-        p = Producto(proveedor_id=prov_id, nombre_producto="Limpiador Desinfectante Amonio Cuaternario", categoria="Limpieza", sku="LTP-AMONIO-001")
-        db.session.add(p); db.session.commit()
-        add_mandatory_reqs(p.producto_id)
-        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Bidón 5L', 'Botella 1L']))
-        db.session.add_all([
-            PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Bidón 5L'}, cantidad_minima=1, precio_unitario="15990"),
-            PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Bidón 5L'}, cantidad_minima=4, precio_unitario="14500"),
-        ])
-
-        # P16.2: Lavaloza Concentrado
-        p = Producto(proveedor_id=prov_id, nombre_producto="Lavaloza Concentrado Limón", categoria="Limpieza", sku="LTP-LAVA-001")
-        db.session.add(p); db.session.commit()
-        add_mandatory_reqs(p.producto_id)
-        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Bidón 5L']))
-        db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Bidón 5L'}, cantidad_minima=1, precio_unitario="12990"))
-
-        # P16.3: Desengrasante Industrial
-        p = Producto(proveedor_id=prov_id, nombre_producto="Desengrasante Industrial para Cocinas", categoria="Limpieza", sku="LTP-DESENG-001")
-        db.session.add(p); db.session.commit()
-        add_mandatory_reqs(p.producto_id)
-        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Bidón 5L', 'Gatillo 900ml']))
-        db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Bidón 5L'}, cantidad_minima=1, precio_unitario="18990"))
-
-        # P16.4: Alcohol Desnaturalizado 70%
-        p = Producto(proveedor_id=prov_id, nombre_producto="Alcohol Desnaturalizado 70%", categoria="Limpieza", sku="LTP-ALCOHOL-001")
-        db.session.add(p); db.session.commit()
-        add_mandatory_reqs(p.producto_id)
-        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Bidón 5L']))
-        db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Bidón 5L'}, cantidad_minima=1, precio_unitario="14990"))
-
-        # P16.5: Cloro Gel
-        p = Producto(proveedor_id=prov_id, nombre_producto="Cloro Gel Tradicional", categoria="Limpieza", sku="LTP-CLORO-001")
-        db.session.add(p); db.session.commit()
-        add_mandatory_reqs(p.producto_id)
-        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Botella 900ml', 'Bidón 5L']))
-        db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Bidón 5L'}, cantidad_minima=1, precio_unitario="9990"))
-
-        # --- Proveedor 17: Virutex --- (Competidor de Limpieza)
-        prov_id = providers["Virutex"].proveedor_id
-        # (Se repetiría una estructura similar con 5 productos: Paños de Microfibra, Esponjas, Bolsas de Basura, etc.)
-
-        # --- Proveedor 18: DDI Chile --- (Competidor de Limpieza Institucional)
-        prov_id = providers["DDI Chile"].proveedor_id
-        # (Se repetiría una estructura similar con 5 productos: Papel Higiénico Jumbo, Toalla de Papel Interfoliada, Jabón Líquido, etc.)
-
+        # ... (Resto de productos para Delicias de la Abuela y otros proveedores de la categoría) ...
+        
         db.session.commit()
-        print("...Productos de Insumos de Limpieza cargados.")
+        print("-> Productos para 'Delicias de la Abuela' cargados.")
 
+        # =====================================================================
+        # CATEGORÍA 4: ABARROTES Y CONSERVAS
+        # =====================================================================
 
-        # #############################################################################
-        # CATEGORÍA: ABARROTES Y ENDULZANTES
-        # #############################################################################
-        print("Cargando productos de Abarrotes y Endulzantes...")
-
-        # --- Proveedor 19: Alimentos del Campo ---
-        prov_id = providers["Alimentos del Campo"].proveedor_id
-
-        # P19.1: Azúcar en Sobres
-        p = Producto(proveedor_id=prov_id, nombre_producto="Azúcar Blanca en Sobres", categoria="Endulzantes", sku="AC-AZUCAR-001")
+        # --- PRODUCTOS PARA "Comercial Surtido" ---
+        prov_id = providers["Comercial Surtido"].proveedor_id
+        
+        # Producto 1: Aceite de Maravilla
+        p = Producto(proveedor_id=prov_id, nombre_producto="Aceite de Maravilla", categoria="Abarrotes y Conservas", descripcion="Aceite vegetal puro de maravilla, ligero y versátil para todo tipo de cocción, frituras y aderezos.")
         db.session.add(p); db.session.commit()
         add_mandatory_reqs(p.producto_id)
-        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Caja 1000 unidades', 'Caja 500 unidades']))
-        db.session.add_all([
-            PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Caja 1000 unidades'}, cantidad_minima=1, precio_unitario="12990"),
-            PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Caja 1000 unidades'}, cantidad_minima=5, precio_unitario="11990"),
-        ])
+        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Botella 1L', 'Bidón 5L']))
+        db.session.commit()
+        for price_point in generate_price_breaks("2800"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Botella 1L'}, **price_point))
+        for price_point in generate_price_breaks("12500"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Bidón 5L'}, **price_point))
 
-        # P19.2: Syrup para Café
-        p = Producto(proveedor_id=prov_id, nombre_producto="Syrup Saborizante para Café", categoria="Salsas y Syrups", sku="AC-SYRUP-001")
+        # Producto 2: Arroz Grado 1
+        p = Producto(proveedor_id=prov_id, nombre_producto="Arroz Blanco Grado 1", categoria="Abarrotes y Conservas", descripcion="Arroz de grano largo, seleccionado por su calidad y rendimiento. El acompañamiento perfecto para cualquier plato.")
         db.session.add(p); db.session.commit()
         add_mandatory_reqs(p.producto_id)
-        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Sabor", orden=1, opciones=['Vainilla', 'Caramelo', 'Avellana', 'Chocolate']))
-        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=2, opciones=['Botella 1L']))
-        db.session.add_all([
-            PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Sabor': 'Vainilla', 'Formato': 'Botella 1L'}, cantidad_minima=1, precio_unitario="8990"),
-            PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Sabor': 'Vainilla', 'Formato': 'Botella 1L'}, cantidad_minima=6, precio_unitario="8290"),
-            PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Sabor': 'Caramelo', 'Formato': 'Botella 1L'}, cantidad_minima=1, precio_unitario="8990"),
-        ])
+        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Bolsa 1kg', 'Saco 5kg']))
+        db.session.commit()
+        for price_point in generate_price_breaks("1900"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Bolsa 1kg'}, **price_point))
+        for price_point in generate_price_breaks("8900"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Saco 5kg'}, **price_point))
 
-        # P19.3: Chocolate en Polvo
-        p = Producto(proveedor_id=prov_id, nombre_producto="Chocolate en Polvo para Chocolate Caliente", categoria="Chocolates", sku="AC-CHOCO-001")
+        # Producto 3: Atún Lomitos en Aceite
+        p = Producto(proveedor_id=prov_id, nombre_producto="Atún Lomitos en Conserva", categoria="Abarrotes y Conservas", descripcion="Lomitos de atún de alta calidad, conservados para mantener su sabor y textura. Ideal para sándwiches y ensaladas.")
         db.session.add(p); db.session.commit()
         add_mandatory_reqs(p.producto_id)
-        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Bolsa 1kg', 'Tarro 3kg']))
-        db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Bolsa 1kg'}, cantidad_minima=1, precio_unitario="11500"))
+        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Conserva", orden=1, opciones=['En Aceite', 'En Agua']))
+        db.session.commit()
+        for price_point in generate_price_breaks("1800"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Conserva': 'En Aceite'}, **price_point))
+        for price_point in generate_price_breaks("1750"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Conserva': 'En Agua'}, **price_point))
 
-        # P19.4: Té en Bolsitas
-        p = Producto(proveedor_id=prov_id, nombre_producto="Té en Bolsitas", categoria="Té e Infusiones", sku="AC-TE-001")
+        # Producto 4: Duraznos en Cubitos
+        p = Producto(proveedor_id=prov_id, nombre_producto="Duraznos en Cubitos en Almíbar", categoria="Abarrotes y Conservas", descripcion="Trozos de durazno jugosos y dulces, en un almíbar ligero. Listos para usar en postres, tortas o con crema.")
         db.session.add(p); db.session.commit()
         add_mandatory_reqs(p.producto_id)
-        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Sabor", orden=1, opciones=['Té Negro', 'Manzanilla', 'Menta']))
-        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=2, opciones=['Caja 100 bolsitas']))
-        db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Sabor': 'Té Negro', 'Formato': 'Caja 100 bolsitas'}, cantidad_minima=1, precio_unitario="5500"))
+        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Lata 820g', 'Lata 425g']))
+        db.session.commit()
+        for price_point in generate_price_breaks("2600"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Lata 820g'}, **price_point))
+        for price_point in generate_price_breaks("1500"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Lata 425g'}, **price_point))
 
-        # P19.5: Endulzante en Gotas
-        p = Producto(proveedor_id=prov_id, nombre_producto="Endulzante Líquido Stevia", categoria="Endulzantes", sku="AC-ENDUL-001")
+        # Producto 5: Harina de Trigo sin Polvos
+        p = Producto(proveedor_id=prov_id, nombre_producto="Harina de Trigo 0000", categoria="Abarrotes y Conservas", descripcion="Harina de trigo extrafina y sin polvos de hornear, ideal para panadería y pastelería profesional que requiere control total.")
+        db.session.add(p); db.session.commit()
+        add_mandatory_reqs(p.producto_id)
+        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Bolsa 1kg', 'Saco 25kg']))
+        db.session.commit()
+        for price_point in generate_price_breaks("1600"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Bolsa 1kg'}, **price_point))
+        for price_point in generate_price_breaks("29990"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Saco 25kg'}, **price_point))
+        
+        db.session.commit()
+        print("-> Productos para 'Comercial Surtido' cargados.")
+
+        # --- PRODUCTOS PARA "Iansafood" ---
+        prov_id = providers["Iansafood"].proveedor_id
+
+        # Producto 1: Azúcar Granulada
+        p = Producto(proveedor_id=prov_id, nombre_producto="Azúcar Blanca Granulada Iansa", categoria="Abarrotes y Conservas", descripcion="Azúcar de remolacha de alta pureza y disolución perfecta. El endulzante clásico para todas tus preparaciones.")
+        db.session.add(p); db.session.commit()
+        add_mandatory_reqs(p.producto_id)
+        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Bolsa 1kg', 'Saco 25kg']))
+        db.session.commit()
+        for price_point in generate_price_breaks("1850"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Bolsa 1kg'}, **price_point))
+        for price_point in generate_price_breaks("32000"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Saco 25kg'}, **price_point))
+
+        # Producto 2: Endulzante Cero K
+        p = Producto(proveedor_id=prov_id, nombre_producto="Endulzante Líquido Cero K", categoria="Abarrotes y Conservas", descripcion="Endulzante sin calorías a base de sucralosa y estevia, ideal para dar dulzor a bebidas frías y calientes.")
         db.session.add(p); db.session.commit()
         add_mandatory_reqs(p.producto_id)
         db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Botella 270ml', 'Botella 500ml']))
-        db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Botella 270ml'}, cantidad_minima=1, precio_unitario="4200"))
-
-        # --- Proveedor 20: Comercial Surtido --- (Competidor de Abarrotes)
-        prov_id = providers["Comercial Surtido"].proveedor_id
-        # (Se repetiría una estructura similar con 5 productos: Aceite, Harina, Conservas, etc.)
-
-        # --- Proveedor 21: Iansafood --- (Competidor de Abarrotes)
-        prov_id = providers["Iansafood"].proveedor_id
-        # (Se repetiría una estructura similar con 5 productos: Azúcar Granulada Iansa, Endulzante Cero K, Ketchup, etc.)
-
         db.session.commit()
-        print("...Productos de Abarrotes y Endulzantes cargados.")
+        for price_point in generate_price_breaks("4200"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Botella 270ml'}, **price_point))
+        for price_point in generate_price_breaks("7500"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Botella 500ml'}, **price_point))
 
+        # Producto 3: Ketchup Iansa
+        p = Producto(proveedor_id=prov_id, nombre_producto="Ketchup de Tomate Iansa", categoria="Abarrotes y Conservas", descripcion="Salsa de tomate ketchup de sabor clásico, elaborada con tomates seleccionados. El aderezo perfecto para sándwiches y picoteos.")
+        db.session.add(p); db.session.commit()
+        add_mandatory_reqs(p.producto_id)
+        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Doypack 1kg', 'Botella 500g']))
+        db.session.commit()
+        for price_point in generate_price_breaks("4500"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Doypack 1kg'}, **price_point))
+        for price_point in generate_price_breaks("2600"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Botella 500g'}, **price_point))
 
-        # #############################################################################
-        # CATEGORÍA: FRUTAS Y VERDURAS FRESCAS
-        # #############################################################################
-        print("Cargando productos de Frutas y Verduras...")
+        # ... (Resto de productos para Iansafood) ...
+        
+        db.session.commit()
+        print("-> Productos para 'Iansafood' cargados.")
 
-        # --- Proveedor 22: Frutas Frescas Lo Valledor ---
+        # =====================================================================
+        # CATEGORÍA 5: FRUTAS Y VERDURAS
+        # =====================================================================
+
+        # --- PRODUCTOS PARA "Frutas Frescas Lo Valledor" ---
         prov_id = providers["Frutas Frescas Lo Valledor"].proveedor_id
-
-        # P22.1: Limón Fresco
-        p = Producto(proveedor_id=prov_id, nombre_producto="Limón Fresco para Jugo", categoria="Frutas", sku="FV-LIMON-001")
+        
+        # Producto 1: Palta Hass
+        p = Producto(proveedor_id=prov_id, nombre_producto="Palta Hass de Calidad", categoria="Frutas y Verduras", descripcion="Palta Hass cremosa y de excelente calibre. Perfecta para tostadas, sándwiches y preparaciones gourmet.")
         db.session.add(p); db.session.commit()
         add_mandatory_reqs(p.producto_id)
-        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato de Venta", orden=1, opciones=['Por Kilo', 'Caja 5kg']))
-        db.session.add_all([
-            PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato de Venta': 'Por Kilo'}, cantidad_minima=1, precio_unitario="1800"),
-            PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato de Venta': 'Caja 5kg'}, cantidad_minima=1, precio_unitario="8500"),
-        ])
+        db.session.add_all([RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Calidad", orden=1, opciones=['Primera', 'Segunda']), RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=2, opciones=['Por Kilo'])])
+        db.session.commit()
+        for price_point in generate_price_breaks("6500"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Calidad': 'Primera', 'Formato': 'Por Kilo'}, **price_point))
+        for price_point in generate_price_breaks("5200"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Calidad': 'Segunda', 'Formato': 'Por Kilo'}, **price_point))
 
-        # P22.2: Palta Hass
-        p = Producto(proveedor_id=prov_id, nombre_producto="Palta Hass", categoria="Verduras", sku="FV-PALTA-001")
+        # Producto 2: Limón para Jugo
+        p = Producto(proveedor_id=prov_id, nombre_producto="Limón para Jugo (Sutil)", categoria="Frutas y Verduras", descripcion="Limón jugoso y de piel delgada, ideal para exprimir y usar en bebidas, aderezos y repostería.")
         db.session.add(p); db.session.commit()
         add_mandatory_reqs(p.producto_id)
-        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Calidad", orden=1, opciones=['Primera', 'Segunda']))
-        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato de Venta", orden=2, opciones=['Por Kilo']))
-        db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Calidad': 'Primera', 'Formato de Venta': 'Por Kilo'}, cantidad_minima=1, precio_unitario="6500"))
+        db.session.add_all([RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Malla 1kg', 'Saco 5kg'])])
+        db.session.commit()
+        for price_point in generate_price_breaks("1800"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Malla 1kg'}, **price_point))
+        for price_point in generate_price_breaks("8500"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Saco 5kg'}, **price_point))
 
-        # P22.3: Naranja para Jugo
-        p = Producto(proveedor_id=prov_id, nombre_producto="Naranja para Jugo", categoria="Frutas", sku="FV-NARANJA-001")
+        # Producto 3: Tomate Larga Vida
+        p = Producto(proveedor_id=prov_id, nombre_producto="Tomate Larga Vida", categoria="Frutas y Verduras", descripcion="Tomate de pulpa firme y mayor duración, perfecto para sándwiches y ensaladas que requieren una buena presentación.")
         db.session.add(p); db.session.commit()
         add_mandatory_reqs(p.producto_id)
-        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato de Venta", orden=1, opciones=['Malla 5kg', 'Saco 20kg']))
-        db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato de Venta': 'Malla 5kg'}, cantidad_minima=1, precio_unitario="5500"))
+        db.session.add_all([RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Por Kilo'])])
+        db.session.commit()
+        for price_point in generate_price_breaks("1990"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Por Kilo'}, **price_point))
 
-        # P22.4: Frutillas Frescas
-        p = Producto(proveedor_id=prov_id, nombre_producto="Frutillas Frescas de Temporada", categoria="Frutas", sku="FV-FRUTILLA-001")
-        db.session.add(p); db.session.commit()
-        add_mandatory_reqs(p.producto_id)
-        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Caja 1kg', 'Caja 500g']))
-        db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Caja 1kg'}, cantidad_minima=1, precio_unitario="4500"))
-
-        # P22.5: Mix de Hojas Verdes
-        p = Producto(proveedor_id=prov_id, nombre_producto="Mix de Hojas Verdes Hidropónicas", categoria="Verduras", sku="FV-MIXH-001")
-        db.session.add(p); db.session.commit()
-        add_mandatory_reqs(p.producto_id)
-        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Bolsa 500g', 'Bolsa 1kg']))
-        db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Bolsa 500g'}, cantidad_minima=1, precio_unitario="3800"))
-
-        # --- Proveedor 23: La Vega Central Online --- (Competidor de Frutas y Verduras)
-        prov_id = providers["La Vega Central Online"].proveedor_id
-        # (Se repetiría una estructura similar con 5 productos: Tomates, Cebollas, Plátanos, etc.)
-
-        # --- Proveedor 24: CampoDirecto SpA --- (Competidor de Frutas y Verduras)
-        prov_id = providers["CampoDirecto SpA"].proveedor_id
-        # (Se repetiría una estructura similar con 5 productos: Berries Congelados, Menta Fresca, Jengibre, etc.)
+        # ... (Resto de productos para Frutas Frescas Lo Valledor) ...
 
         db.session.commit()
-        print("...Productos de Frutas y Verduras cargados.")
+        print("-> Productos para 'Frutas Frescas Lo Valledor' cargados.")
 
-        print("\nProceso de 'seeding' completado exitosamente.")
+        # =====================================================================
+        # CATEGORÍA 6: DESECHABLES Y PACKAGING
+        # =====================================================================
+
+        # --- PRODUCTOS PARA "Ecologico-Pack" ---
+        prov_id = providers["Ecologico-Pack"].proveedor_id
+        
+        # Producto 1: Vaso de Cartón para Café
+        p = Producto(proveedor_id=prov_id, nombre_producto="Vaso de Cartón para Bebida Caliente", categoria="Desechables y Packaging", descripcion="Vaso de cartón de pared simple con recubrimiento interior de PLA. Perfecto para café, té y otras bebidas calientes.")
+        db.session.add(p); db.session.commit()
+        add_mandatory_reqs(p.producto_id)
+        db.session.add_all([RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Tamaño", orden=1, opciones=['8oz (240cc)', '12oz (360cc)']), RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Diseño", orden=2, opciones=['Blanco', 'Kraft'])])
+        db.session.commit()
+        for price_point in generate_price_breaks("95"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Tamaño': '8oz (240cc)', 'Diseño': 'Kraft'}, **price_point))
+        for price_point in generate_price_breaks("120"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Tamaño': '12oz (360cc)', 'Diseño': 'Kraft'}, **price_point))
+        for price_point in generate_price_breaks("90"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Tamaño': '8oz (240cc)', 'Diseño': 'Blanco'}, **price_point))
+
+        # Producto 2: Tapa Viajera para Vaso
+        p = Producto(proveedor_id=prov_id, nombre_producto="Tapa Viajera para Vaso de Cartón", categoria="Desechables y Packaging", descripcion="Tapa de CPLA (bioplástico resistente al calor) con boquilla para beber cómodamente. Ajuste seguro para evitar derrames.")
+        db.session.add(p); db.session.commit()
+        add_mandatory_reqs(p.producto_id)
+        db.session.add_all([RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Tamaño Compatible", orden=1, opciones=['8oz', '12oz']), RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Color", orden=2, opciones=['Blanco', 'Negro'])])
+        db.session.commit()
+        for price_point in generate_price_breaks("55"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Tamaño Compatible': '8oz', 'Color': 'Negro'}, **price_point))
+        for price_point in generate_price_breaks("65"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Tamaño Compatible': '12oz', 'Color': 'Negro'}, **price_point))
+
+        # Producto 3: Removedores de Madera
+        p = Producto(proveedor_id=prov_id, nombre_producto="Removedores de Madera de Abedul", categoria="Desechables y Packaging", descripcion="Removedores de madera pulida, 100% biodegradables y compostables. Una alternativa elegante y ecológica al plástico.")
+        db.session.add(p); db.session.commit()
+        add_mandatory_reqs(p.producto_id)
+        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Caja 1000 unidades', 'Caja 5000 unidades']))
+        db.session.commit()
+        for price_point in generate_price_breaks("5990"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Caja 1000 unidades'}, **price_point))
+        for price_point in generate_price_breaks("25000"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Caja 5000 unidades'}, **price_point))
+
+        db.session.commit()
+        print("-> Productos para 'Ecologico-Pack' cargados.")
+
+        # =====================================================================
+        # CATEGORÍA 7: LIMPIEZA E HIGIENE
+        # =====================================================================
+
+        # --- PRODUCTOS PARA "Limpieza Total Pro" ---
+        prov_id = providers["Limpieza Total Pro"].proveedor_id
+
+        # Producto 1: Detergente Lavaloza Concentrado
+        p = Producto(proveedor_id=prov_id, nombre_producto="Detergente Lavaloza Concentrado Limón", categoria="Limpieza e Higiene", descripcion="Fórmula concentrada de alto rendimiento que elimina la grasa más difícil. Aroma fresco a limón. Biodegradable.")
+        db.session.add(p); db.session.commit()
+        add_mandatory_reqs(p.producto_id)
+        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Bidón 5L', 'Botella 1L']))
+        db.session.commit()
+        for price_point in generate_price_breaks("12990"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Bidón 5L'}, **price_point))
+        for price_point in generate_price_breaks("3500"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Botella 1L'}, **price_point))
+
+        # Producto 2: Desengrasante Industrial para Cocinas
+        p = Producto(proveedor_id=prov_id, nombre_producto="Desengrasante Industrial para Cocinas", categoria="Limpieza e Higiene", descripcion="Potente desengrasante alcalino para la limpieza de campanas, planchas, hornos y superficies con grasa pesada.")
+        db.session.add(p); db.session.commit()
+        add_mandatory_reqs(p.producto_id)
+        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Bidón 5L', 'Gatillo 900ml']))
+        db.session.commit()
+        for price_point in generate_price_breaks("18990"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Bidón 5L'}, **price_point))
+        for price_point in generate_price_breaks("4800"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Gatillo 900ml'}, **price_point))
+        
+        # Producto 3: Toalla de Papel Interfoliada
+        p = Producto(proveedor_id=prov_id, nombre_producto="Toalla de Papel Interfoliada", categoria="Limpieza e Higiene", descripcion="Toallas de papel de hoja doble, de alta absorción y resistencia. Dispensado una a una para mayor higiene y ahorro.")
+        db.session.add(p); db.session.commit()
+        add_mandatory_reqs(p.producto_id)
+        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Caja 2000 unidades']))
+        db.session.commit()
+        for price_point in generate_price_breaks("15500"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Caja 2000 unidades'}, **price_point))
+
+        db.session.commit()
+        print("-> Productos para 'Limpieza Total Pro' cargados.")
+        
+        # =====================================================================
+        # CATEGORÍA 8: CONGELADOS Y PREPARADOS
+        # =====================================================================
+
+        # --- PRODUCTOS PARA "BredenMaster" ---
+        prov_id = providers["BredenMaster"].proveedor_id
+        
+        # Producto 1: Croissant de Mantequilla Congelado
+        p = Producto(proveedor_id=prov_id, nombre_producto="Croissant de Mantequilla Pre-fermentado", categoria="Congelados y Preparados", descripcion="Croissants de mantequilla listos para hornear. De la caja al horno para un producto fresco y crujiente en minutos.")
+        db.session.add(p); db.session.commit()
+        add_mandatory_reqs(p.producto_id)
+        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Caja 60 unidades']))
+        db.session.commit()
+        for price_point in generate_price_breaks("35000"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Caja 60 unidades'}, **price_point))
+        
+        # Producto 2: Muffin Congelado
+        p = Producto(proveedor_id=prov_id, nombre_producto="Muffin Congelado listo para consumir", categoria="Congelados y Preparados", descripcion="Muffins jugosos y sabrosos. Solo descongela y sirve. Ahorra tiempo y reduce mermas en tu operación.")
+        db.session.add(p); db.session.commit()
+        add_mandatory_reqs(p.producto_id)
+        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Sabor", orden=1, opciones=['Chips de Chocolate', 'Arándano']))
+        db.session.commit()
+        for price_point in generate_price_breaks("22000"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Sabor': 'Chips de Chocolate'}, **price_point))
+        for price_point in generate_price_breaks("23500"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Sabor': 'Arándano'}, **price_point))
+
+        # Producto 3: Pan Ciabatta Precocido Congelado
+        p = Producto(proveedor_id=prov_id, nombre_producto="Pan Ciabatta Precocido Congelado", categoria="Congelados y Preparados", descripcion="Pan de estilo italiano con corteza crujiente y miga aireada. Termina la cocción en tu horno en solo 8 minutos.")
+        db.session.add(p); db.session.commit()
+        add_mandatory_reqs(p.producto_id)
+        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Caja 40 unidades']))
+        db.session.commit()
+        for price_point in generate_price_breaks("28000"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Caja 40 unidades'}, **price_point))
+        
+        db.session.commit()
+        print("-> Productos para 'BredenMaster' cargados.")
+
+        # --- PRODUCTOS PARA "Frutos del Maipo" ---
+        prov_id = providers["Frutos del Maipo"].proveedor_id
+
+        # Producto 1: Frutillas Congeladas IQF
+        p = Producto(proveedor_id=prov_id, nombre_producto="Frutillas Congeladas IQF", categoria="Congelados y Preparados", descripcion="Frutillas enteras congeladas individualmente (IQF) para que no se peguen. Perfectas para jugos, batidos y postres.")
+        db.session.add(p); db.session.commit()
+        add_mandatory_reqs(p.producto_id)
+        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Bolsa 1kg', 'Caja 5kg']))
+        db.session.commit()
+        for price_point in generate_price_breaks("4500"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Bolsa 1kg'}, **price_point))
+        for price_point in generate_price_breaks("21000"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Caja 5kg'}, **price_point))
+
+        # Producto 2: Palta en Mitades Congelada
+        p = Producto(proveedor_id=prov_id, nombre_producto="Palta en Mitades Congelada", categoria="Congelados y Preparados", descripcion="Palta Hass en su punto, pelada y en mitades. Disminuye la merma y ten palta de calidad disponible todo el año.")
+        db.session.add(p); db.session.commit()
+        add_mandatory_reqs(p.producto_id)
+        db.session.add(RequisitoProducto(producto_id=p.producto_id, nombre_requisito="Formato", orden=1, opciones=['Bolsa 1kg']))
+        db.session.commit()
+        for price_point in generate_price_breaks("11500"): db.session.add(PreciosProducto(producto_id=p.producto_id, variante_requisitos={'Formato': 'Bolsa 1kg'}, **price_point))
+        
+        db.session.commit()
+        print("-> Productos para 'Frutos del Maipo' cargados.")
+
+
+
+        print("\n=====================================================")
+        print("= PROCESO DE SEEDING FINALIZADO EXITOSAMENTE =")
+        print("=====================================================")
+
 
 # Este bloque final asegura que el script pueda ser llamado desde la línea de comandos
 if __name__ == '__main__':
     cli()
-
